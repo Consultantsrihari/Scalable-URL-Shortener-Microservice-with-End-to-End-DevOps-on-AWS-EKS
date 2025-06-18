@@ -1,0 +1,76 @@
+name: CI/CD Pipeline for URL Shortener
+
+on:
+  push:
+    branches:
+      - main # Trigger workflow on pushes to the main branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production # Or 'staging' based on your needs
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: Install Python dependencies
+      run: pip install -r app/requirements.txt
+
+    - name: Run tests (optional, but highly recommended)
+      # You would add your actual test command here (e.g., pytest app/tests/)
+      run: echo "Running tests..." # Replace with actual test command if you have tests
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }} # e.g., us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build and Push Docker image to ECR
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: url-shortener-app
+        IMAGE_TAG: ${{ github.sha }} # Use commit SHA as image tag for uniqueness
+      run: |
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      id: build-image # Set an ID to reference outputs
+
+    - name: Update Kubeconfig for EKS
+      uses: aws-actions/amazon-eks-setup@v2
+      with:
+        cluster-name: ${{ secrets.EKS_CLUSTER_NAME }}
+        config-files: |
+          ~/.kube/config # Ensure this path is correct if you're writing to it
+
+    - name: Deploy to EKS
+      run: |
+        # Replace the image in your Kubernetes deployment manifest with the newly built image
+        # This uses 'sed' for in-place replacement; adjust for your actual YAML structure
+        sed -i "s|YOUR_ECR_REPO_URL/url-shortener-app:latest|${{ steps.build-image.outputs.image_uri }}|g" kubernetes/deployment.yaml
+
+        # Apply Kubernetes manifests
+        kubectl apply -f kubernetes/deployment.yaml
+        kubectl apply -f kubernetes/service.yaml
+        kubectl apply -f kubernetes/ingress.yaml # If using Ingress for external access
+
+        kubectl rollout status deployment/url-shortener-deployment # Wait for deployment to complete
+
+      env:
+        # Pass DB credentials securely as Kubernetes secrets or environment variables
+        # This example assumes you've manually created a Kubernetes Secret named 'db-credentials'
+        # with keys like 'DB_HOST', 'DB_NAME', etc.
+        # It's better to manage these outside the workflow or using a secrets manager.
+        KUBECONFIG: ~/.kube/config
