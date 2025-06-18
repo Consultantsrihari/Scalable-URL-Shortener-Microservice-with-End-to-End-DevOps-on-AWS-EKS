@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: ./app  # Build the app from the 'app' directory
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000" # Map host port 5000 to container port 5000
+    environment:
+      # These variables will be used by app.py to connect to the DB
+      DB_NAME: urlshortenerdb
+      DB_USER: user
+      DB_PASSWORD: password
+      DB_HOST: db # Service name 'db' maps to the Docker network
+      DB_PORT: 5432
+      FLASK_SECRET_KEY: your_local_development_secret_key
+    depends_on:
+      - db # Ensure the database starts before the app
+    # Mount the local app code for live reloading during development (optional, uncomment for dev)
+    # volumes:
+    #   - ./app:/app
+
+  db:
+    image: postgres:13-alpine # Use a specific, lightweight PostgreSQL image
+    environment:
+      POSTGRES_DB: urlshortenerdb
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432" # Map host port 5432 to container port 5432
+    volumes:
+      - pg_data:/var/lib/postgresql/data # Persist database data
+
+volumes:
+  pg_data: # Define a named volume for PostgreSQL data persistence
